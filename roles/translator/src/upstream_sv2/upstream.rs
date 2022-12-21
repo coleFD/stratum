@@ -6,7 +6,7 @@ use crate::{
 };
 use async_channel::{Receiver, Sender};
 use async_std::{net::TcpStream, task};
-use binary_sv2::u256_from_int;
+use binary_sv2::{u256_from_int, U256};
 use codec_sv2::{Frame, HandshakeRole, Initiator};
 use network_helpers::Connection;
 use roles_logic_sv2::{
@@ -22,7 +22,7 @@ use roles_logic_sv2::{
     },
     mining_sv2::{
         ExtendedExtranonce, Extranonce, NewExtendedMiningJob, OpenExtendedMiningChannel,
-        SetNewPrevHash, SubmitSharesExtended,
+        SetNewPrevHash, SubmitSharesExtended, Target,
     },
     parsers::Mining,
     routing_logic::{CommonRoutingLogic, MiningRoutingLogic, NoRouting},
@@ -377,6 +377,7 @@ impl Upstream {
         let receiver = self_
             .safe_lock(|s| s.rx_sv2_submit_shares_ext.clone())
             .unwrap();
+        let target = self_.safe_lock(|s| s.target.clone()).unwrap();
         task::spawn(async move {
             loop {
                 let mut sv2_submit: SubmitSharesExtended = receiver.recv().await.unwrap();
@@ -387,17 +388,30 @@ impl Upstream {
                 info!("Up: Submitting Share");
                 debug!("Up: Handling SubmitSharesExtended: {:?}", &sv2_submit);
 
-                //match self_
-                //    .safe_lock(|s| s.current_job.clone().get_candidate_hash(&sv2_submit))
-                //    .unwrap()
-                //{
-                //    Some(target) => {
-                //        debug!("Up: SubmitSharesExtended Target: {:?}", target);
-                //    }
-                //    None => {
-                //        println!("Err:: Up: Received share but no job is present");
-                //    }
-                //}
+                // check share target against Upstream target,
+                match self_
+                    .safe_lock(|s| s.current_job.clone().get_candidate_hash(&sv2_submit))
+                    .unwrap()
+                {
+                    Some(share_target) => {
+                        match target.safe_lock(|t| U256::try_from(t.clone())).unwrap() {
+                            Ok(upstream_target) => {
+                                // if downstream target is greater than upstream, forget this share and wait for the next
+                                if Target::from(share_target) >= Target::from(upstream_target) {
+                                    info!("Submitted shares do not meet upstream target criteria");
+                                    continue;
+                                }
+                            }
+                            Err(_e) => {
+                                panic!("Invalid upstream target: Could not convert to Target");
+                            }
+                        }
+                    }
+                    None => {
+                        error!("Err:: Up: Received share but no job is present");
+                        continue;
+                    }
+                }
 
                 let message = Message::Mining(
                     roles_logic_sv2::parsers::Mining::SubmitSharesExtended(sv2_submit),
