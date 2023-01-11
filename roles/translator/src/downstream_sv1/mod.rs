@@ -2,7 +2,7 @@ use v1::utils::HexU32Be;
 pub mod downstream;
 pub use downstream::Downstream;
 
-const SUBSCRIBE_TIMOUT_SECS: u64 = 10;
+const SUBSCRIBE_TIMEOUT_SECS: u64 = 10;
 
 pub async fn kill(sender: &async_channel::Sender<bool>) {
     sender.send(true).await.unwrap();

@@ -8,7 +8,7 @@ use async_std::{
 };
 use futures::FutureExt;
 
-use super::{kill, SUBSCRIBE_TIMOUT_SECS};
+use super::{kill, SUBSCRIBE_TIMEOUT_SECS};
 
 use roles_logic_sv2::{
     bitcoin::util::uint::Uint256,
@@ -224,7 +224,7 @@ impl Downstream {
                     };
                 } else {
                     // timeout connection if miner does not send the authorize message after sending a subscribe
-                    if timeout_timer.elapsed().as_secs() > SUBSCRIBE_TIMOUT_SECS {
+                    if timeout_timer.elapsed().as_secs() > SUBSCRIBE_TIMEOUT_SECS {
                         warn!("miner.subscribe/miner.authorize TIMOUT");
                         break;
                     }
