@@ -8,7 +8,7 @@ use async_std::{
 };
 use futures::FutureExt;
 
-use super::{kill, TaskIndex};
+use super::{kill, TaskIndex, SUBSCRIBE_TIMOUT_SECS};
 
 use roles_logic_sv2::{
     bitcoin::util::uint::Uint256,
@@ -86,7 +86,6 @@ impl Downstream {
         let self_ = downstream.clone();
 
         let (tx_shutdown, rx_shutdown): (Sender<bool>, Receiver<bool>) = async_channel::bounded(3);
-        let task_state = Arc::new(Mutex::new([true, true, true]));
 
         // Task to read from SV1 Mining Device Client socket via `socket_reader`. Depending on the
         // SV1 message received, a message response is sent directly back to the SV1 Downstream
@@ -94,8 +93,7 @@ impl Downstream {
         // and then sent to the SV2 Upstream role.
         let rx_shutdown_clone = rx_shutdown.clone();
         let tx_shutdown_clone = tx_shutdown.clone();
-        let task_state_clone = task_state.clone();
-        let socket_reader_task = task::spawn(async move {
+        let _socket_reader_task = task::spawn(async move {
             loop {
                 task::sleep(std::time::Duration::from_millis(5)).await;
                 // Read message from SV1 Mining Device Client socket
@@ -111,7 +109,6 @@ impl Downstream {
                                 Ok(msg) => msg,
                                 Err(_e) => {
                                     tracing::error!("\nBAD MESSAGE\n");
-                                    kill(&tx_shutdown_clone).await;
                                     break;
                                 }
                             };
@@ -126,15 +123,15 @@ impl Downstream {
 
                     
                 }
+                kill(&tx_shutdown_clone).await;
                 warn!("SHUTTING DOWN READER");
         });
 
         let rx_shutdown_clone = rx_shutdown.clone();
         let tx_shutdown_clone = tx_shutdown.clone();
-        let task_state_clone = task_state.clone();
         // Task to receive SV1 message responses to SV1 messages that do NOT need translation.
         // These response messages are sent directly to the SV1 Downstream role.
-        let socket_writer_task = task::spawn(async move {
+        let _socket_writer_task = task::spawn(async move {
             loop {
                 select! {
                     res = receiver_outgoing.recv().fuse() => {
@@ -143,7 +140,6 @@ impl Downstream {
                                 let to_send = match serde_json::to_string(&to_send) {
                                     Ok(string) => format!("{}\n", string),
                                     Err(_e) => {
-                                        kill(&tx_shutdown_clone).await;
                                         break;
                                     }
                                 };
@@ -152,13 +148,11 @@ impl Downstream {
                                     .write_all(to_send.as_bytes())
                                     .await;
                                 if let Err(_e) = res {
-                                    kill(&tx_shutdown_clone).await;
                                     break
                                 }
                             }
                             Err(_e) => {
                                 // should this kill the downstream or just send a status update to the main thread?
-                                kill(&tx_shutdown_clone).await;
                                 break;
                             }
                         }
@@ -169,14 +163,14 @@ impl Downstream {
                 }; 
                 
             }
+            kill(&tx_shutdown_clone).await;
             warn!("SHUTTING DOWN WRITER");
         });
 
         let downstream_clone = downstream.clone();
         let rx_shutdown_clone = rx_shutdown.clone();
-        let tx_shutdown_clone = tx_shutdown.clone();
-        let task_state_clone = task_state.clone();
-        let notify_task = task::spawn(async move {
+        let _notify_task = task::spawn(async move {
+            let timeout_timer = std::time::Instant::now();
             let mut first_sent = false;
             loop {
                 let is_a = if let Ok(is_a) =
@@ -184,11 +178,11 @@ impl Downstream {
                 {
                     is_a
                 } else {
-                    // kill(&tx_shutdown).await;
                     break;
                 };
 
                 if is_a && !first_sent && last_notify.is_some() {
+                    drop(timeout_timer);
                     let message = Self::get_set_difficulty(target.clone());
                     Downstream::send_message_downstream(downstream_clone.clone(), message).await;
 
@@ -198,8 +192,6 @@ impl Downstream {
                             {
                                 Ok(msg) => msg,
                                 Err(_e) => {
-                                    // should this kill the downstream connection or log a status to the main thread and continue
-                                    kill(&tx_shutdown).await;
                                     break;
                                 }
                             };
@@ -209,7 +201,6 @@ impl Downstream {
                             if let Err(_e) = downstream_clone.clone().safe_lock(|s| {
                                 s.first_job_received = true;
                             }) {
-                                // kill(&tx_shutdown).await;
                                 break;
                             }
                             first_sent = true;
@@ -217,7 +208,7 @@ impl Downstream {
                         None => break,
                     }
                 } else if is_a {
-                    kill(&tx_shutdown_clone).await;
+                    break
                     select! {
                         res = rx_sv1_notify.recv().fuse() => {
                             match res {
@@ -227,7 +218,6 @@ impl Downstream {
                                         Ok(msg) => msg,
                                         Err(_e) => {
                                             // should this kill the downstream connection or log a status to the main thread and continue
-                                            kill(&tx_shutdown).await;
                                             break;
                                         }
                                     };
@@ -237,7 +227,6 @@ impl Downstream {
                                     first_sent = true;
                                 }
                                 Err(_e) => {
-                                    kill(&tx_shutdown).await;
                                     break;
                                 }
                             }
@@ -247,31 +236,17 @@ impl Downstream {
                             }
                     };
                 } else {
+                    // timeout connection if miner does not send the authorize message after sending a subscribe
+                    if timeout_timer.elapsed().as_secs() > SUBSCRIBE_TIMOUT_SECS {
+                        warn!("miner.subscribe/miner.authorize TIMOUT");
+                        break;
+                    }
                     task::sleep(std::time::Duration::from_secs(1)).await;
                 }
             }
+            kill(&tx_shutdown).await;
             warn!("SHUTTING DOWN NOTIFIER");
         });
-
-        // task to monitor the state of the Downstream tasks so that they can all
-        // be shut down if one of them drops, and the miner connection can be dropped
-        // task::spawn(async move {
-        //     // let task_arr = [socket_reader_task, socket_writer_task, notify_task];
-        //     loop {
-        //         let all_tasks_running = task_state.safe_lock(|t| *t).unwrap_or({
-        //             // send poison lock info to main thread
-        //             [false, false, false]
-        //         });
-        //         // println!("\n ALL TASKS RUNNING: {:?}", all_tasks_running);
-        //         if all_tasks_running.contains(&false) {
-        //             // _socket_writer_notify.shutdown(std::net::Shutdown::Both);
-        //             tx_shutdown.send(true).await.unwrap();
-        //             break;
-        //         }
-        //         task::sleep(std::time::Duration::from_millis(100)).await;
-        //     }
-        //     warn!("\n DOWNSTREAM SHUTDOWN");
-        // });
 
     }
 
