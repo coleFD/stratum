@@ -8,7 +8,7 @@ use async_std::{
 };
 use futures::FutureExt;
 
-use super::{kill, SUBSCRIBE_TIMOUT_SECS};
+use super::{kill, SUBSCRIBE_TIMEOUT_SECS};
 
 use roles_logic_sv2::{
     bitcoin::util::uint::Uint256,
@@ -85,16 +85,27 @@ impl Downstream {
         }));
         let self_ = downstream.clone();
 
+        // The shutdown channel is used local to the `Downstream::new_downstream()` function.
+        // Each task is set broadcast a shutdown message at the end of their lifecycle with `kill()`, and each task has a receiver to listen
+        // for the shutdown message. When a shutdown message is received the task should `break` its loop. For any errors that should shut
+        // a task down, we should `break` out of the loop, so that the `kill` function can send the shutdown broadcast.
+        // EXTRA: The since all downstream tasks rely on receiving messages with a future (either TCP recv or Receiver<_>)
+        // we use the futures::select! macro to merge the receiving end of a task channels into a single loop within the task
         let (tx_shutdown, rx_shutdown): (Sender<bool>, Receiver<bool>) = async_channel::bounded(3);
 
+        let rx_shutdown_clone = rx_shutdown.clone();
+        let tx_shutdown_clone = tx_shutdown.clone();
         // Task to read from SV1 Mining Device Client socket via `socket_reader`. Depending on the
         // SV1 message received, a message response is sent directly back to the SV1 Downstream
         // role, or the message is sent upwards to the Bridge for translation into a SV2 message
         // and then sent to the SV2 Upstream role.
-        let rx_shutdown_clone = rx_shutdown.clone();
-        let tx_shutdown_clone = tx_shutdown.clone();
         let _socket_reader_task = task::spawn(async move {
             loop {
+                // ***TODO:  see https://github.com/stratum-mining/stratum/issues/399 ***
+                // Because the message readers return None while there is no data in the buffer/queue,
+                // this sleep is used to prevent infinite looping while no messages are being sent
+                // We are currently using 5msintervals since it allows many connections and a decent speed
+                // but we should find a better solution
                 task::sleep(std::time::Duration::from_millis(5)).await;
                 // Read message from SV1 Mining Device Client socket
                 let mut messages = BufReader::new(&*socket_reader).lines();
@@ -108,7 +119,7 @@ impl Downstream {
                             let incoming: json_rpc::Message = match serde_json::from_str(&incoming) {
                                 Ok(msg) => msg,
                                 Err(_e) => {
-                                    tracing::error!("\nBAD MESSAGE\n");
+                                    warn!("\nDownstream: Invalid SV1 client message\n");
                                     break;
                                 }
                             };
@@ -122,7 +133,7 @@ impl Downstream {
                 };
             }
             kill(&tx_shutdown_clone).await;
-            warn!("SHUTTING DOWN READER");
+            warn!("Downstream: Shutting down sv1 downstream reader");
         });
 
         let rx_shutdown_clone = rx_shutdown.clone();
@@ -138,6 +149,7 @@ impl Downstream {
                                 let to_send = match serde_json::to_string(&to_send) {
                                     Ok(string) => format!("{}\n", string),
                                     Err(_e) => {
+                                        warn!("\nDownstream: Bad SV1 server message\n");
                                         break;
                                     }
                                 };
@@ -146,11 +158,13 @@ impl Downstream {
                                     .write_all(to_send.as_bytes())
                                     .await;
                                 if let Err(_e) = res {
+                                    warn!("\nDownstream: Sv1 downstream connection failed\n");
                                     break
                                 }
                             }
                             Err(_e) => {
                                 // should this kill the downstream or just send a status update to the main thread?
+                                warn!("\nDownstream: Receiver outgoing message channel failed\n");
                                 break;
                             }
                         }
@@ -161,7 +175,7 @@ impl Downstream {
                 };
             }
             kill(&tx_shutdown_clone).await;
-            warn!("SHUTTING DOWN WRITER");
+            warn!("Downstream: Shutting down sv1 downstream writer");
         });
 
         let _notify_task = task::spawn(async move {
@@ -170,7 +184,10 @@ impl Downstream {
             loop {
                 let is_a = match downstream.safe_lock(|d| !d.authorized_names.is_empty()) {
                     Ok(is_a) => is_a,
-                    Err(_e) => break,
+                    Err(_e) => {
+                        warn!("\nDownstream: Poison Lock - authorized_names\n");
+                        break;
+                    }
                 };
                 if is_a && !first_sent && last_notify.is_some() {
                     let message = Self::get_set_difficulty(target.clone());
@@ -182,6 +199,7 @@ impl Downstream {
                             {
                                 Ok(msg) => msg,
                                 Err(_e) => {
+                                    warn!("\nDownstream: Invalid sv1 notify message\n");
                                     break;
                                 }
                             };
@@ -190,11 +208,15 @@ impl Downstream {
                             if let Err(_e) = downstream.clone().safe_lock(|s| {
                                 s.first_job_received = true;
                             }) {
+                                warn!("\nDownstream: Poison Lock - first_job_received\n");
                                 break;
                             }
                             first_sent = true;
                         }
-                        None => break,
+                        None => {
+                            warn!("\nDownstream: last_notify never set\n");
+                            break;
+                        }
                     }
                 } else if is_a {
                     select! {
@@ -205,7 +227,7 @@ impl Downstream {
                                     {
                                         Ok(msg) => msg,
                                         Err(_e) => {
-                                            // should this kill the downstream connection or log a status to the main thread and continue
+                                            warn!("\nDownstream: Invalid sv1 notify message\n");
                                             break;
                                         }
                                     };
@@ -214,6 +236,7 @@ impl Downstream {
                                         .await;
                                 }
                                 Err(_e) => {
+                                    warn!("\nDownstream: Notify message channel failed\n");
                                     break;
                                 }
                             }
@@ -224,15 +247,15 @@ impl Downstream {
                     };
                 } else {
                     // timeout connection if miner does not send the authorize message after sending a subscribe
-                    if timeout_timer.elapsed().as_secs() > SUBSCRIBE_TIMOUT_SECS {
-                        warn!("miner.subscribe/miner.authorize TIMOUT");
+                    if timeout_timer.elapsed().as_secs() > SUBSCRIBE_TIMEOUT_SECS {
+                        warn!("Downstream: miner.subscribe/miner.authorize TIMOUT");
                         break;
                     }
                     task::sleep(std::time::Duration::from_secs(1)).await;
                 }
             }
             kill(&tx_shutdown).await;
-            warn!("SHUTTING DOWN NOTIFIER");
+            warn!("Downstream: Shutting down sv1 downstream job notifier");
         });
     }
 
