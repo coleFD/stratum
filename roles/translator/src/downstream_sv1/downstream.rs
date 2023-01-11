@@ -1,14 +1,14 @@
-use crate::{downstream_sv1, ProxyResult};
+use crate::downstream_sv1;
 use async_channel::{bounded, Receiver, Sender};
 use async_std::{
     io::BufReader,
-    net::{TcpListener, TcpStream, Incoming},
+    net::{TcpListener, TcpStream},
     prelude::*,
     task,
 };
 use futures::FutureExt;
 
-use super::{kill, TaskIndex, SUBSCRIBE_TIMOUT_SECS};
+use super::{kill, SUBSCRIBE_TIMOUT_SECS};
 
 use roles_logic_sv2::{
     bitcoin::util::uint::Uint256,
@@ -52,6 +52,7 @@ pub struct Downstream {
 
 impl Downstream {
     /// Instantiate a new `Downstream`.
+    #[allow(clippy::while_let_loop)]
     pub async fn new_downstream(
         stream: TcpStream,
         tx_sv1_submit: Sender<(v1::client_to_server::Submit<'static>, Vec<u8>)>,
@@ -119,12 +120,10 @@ impl Downstream {
                     _ = rx_shutdown_clone.recv().fuse() => {
                             break;
                         }
-                }; 
-
-                    
-                }
-                kill(&tx_shutdown_clone).await;
-                warn!("SHUTTING DOWN READER");
+                };
+            }
+            kill(&tx_shutdown_clone).await;
+            warn!("SHUTTING DOWN READER");
         });
 
         let rx_shutdown_clone = rx_shutdown.clone();
@@ -160,31 +159,23 @@ impl Downstream {
                     _ = rx_shutdown_clone.recv().fuse() => {
                             break;
                         }
-                }; 
-                
+                };
             }
             kill(&tx_shutdown_clone).await;
             warn!("SHUTTING DOWN WRITER");
         });
 
-        let downstream_clone = downstream.clone();
-        let rx_shutdown_clone = rx_shutdown.clone();
         let _notify_task = task::spawn(async move {
             let timeout_timer = std::time::Instant::now();
             let mut first_sent = false;
             loop {
-                let is_a = if let Ok(is_a) =
-                    downstream_clone.safe_lock(|d| !d.authorized_names.is_empty())
-                {
-                    is_a
-                } else {
-                    break;
+                let is_a = match downstream.safe_lock(|d| !d.authorized_names.is_empty()) {
+                    Ok(is_a) => is_a,
+                    Err(_e) => break,
                 };
-
                 if is_a && !first_sent && last_notify.is_some() {
-                    drop(timeout_timer);
                     let message = Self::get_set_difficulty(target.clone());
-                    Downstream::send_message_downstream(downstream_clone.clone(), message).await;
+                    Downstream::send_message_downstream(downstream.clone(), message).await;
 
                     match last_notify.clone() {
                         Some(sv1_mining_notify_msg) => {
@@ -196,9 +187,8 @@ impl Downstream {
                                 }
                             };
 
-                            Downstream::send_message_downstream(downstream_clone.clone(), message)
-                                .await;
-                            if let Err(_e) = downstream_clone.clone().safe_lock(|s| {
+                            Downstream::send_message_downstream(downstream.clone(), message).await;
+                            if let Err(_e) = downstream.clone().safe_lock(|s| {
                                 s.first_job_received = true;
                             }) {
                                 break;
@@ -208,7 +198,6 @@ impl Downstream {
                         None => break,
                     }
                 } else if is_a {
-                    break
                     select! {
                         res = rx_sv1_notify.recv().fuse() => {
                             match res {
@@ -221,17 +210,16 @@ impl Downstream {
                                             break;
                                         }
                                     };
-        
-                                    Downstream::send_message_downstream(downstream_clone.clone(), message)
+
+                                    Downstream::send_message_downstream(downstream.clone(), message)
                                         .await;
-                                    first_sent = true;
                                 }
                                 Err(_e) => {
                                     break;
                                 }
                             }
                         },
-                        _ = rx_shutdown_clone.recv().fuse() => {
+                        _ = rx_shutdown.recv().fuse() => {
                                 break;
                             }
                     };
@@ -247,7 +235,6 @@ impl Downstream {
             kill(&tx_shutdown).await;
             warn!("SHUTTING DOWN NOTIFIER");
         });
-
     }
 
     /// Helper function to check if target is set to zero for some reason (typically happens when
