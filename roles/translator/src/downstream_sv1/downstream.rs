@@ -1,5 +1,5 @@
 use crate::downstream_sv1;
-use async_channel::{bounded, Receiver, Sender};
+use async_std::channel::{bounded, Receiver, Sender};
 use async_std::{
     io::BufReader,
     net::{TcpListener, TcpStream},
@@ -56,7 +56,7 @@ impl Downstream {
     pub async fn new_downstream(
         stream: TcpStream,
         tx_sv1_submit: Sender<(v1::client_to_server::Submit<'static>, Vec<u8>)>,
-        rx_sv1_notify: Receiver<server_to_client::Notify<'static>>,
+        mut rx_sv1_notify: tokio::sync::broadcast::Receiver<server_to_client::Notify<'static>>,
         extranonce1: Vec<u8>,
         last_notify: Option<server_to_client::Notify<'static>>,
         target: Vec<u8>,
@@ -91,7 +91,7 @@ impl Downstream {
         // a task down, we should `break` out of the loop, so that the `kill` function can send the shutdown broadcast.
         // EXTRA: The since all downstream tasks rely on receiving messages with a future (either TCP recv or Receiver<_>)
         // we use the futures::select! macro to merge the receiving end of a task channels into a single loop within the task
-        let (tx_shutdown, rx_shutdown): (Sender<bool>, Receiver<bool>) = async_channel::bounded(3);
+        let (tx_shutdown, rx_shutdown): (Sender<bool>, Receiver<bool>) = async_std::channel::bounded(3);
 
         let rx_shutdown_clone = rx_shutdown.clone();
         let tx_shutdown_clone = tx_shutdown.clone();
@@ -204,7 +204,9 @@ impl Downstream {
                                 }
                             };
 
-                            Downstream::send_message_downstream(downstream.clone(), message).await;
+                            if Downstream::send_message_downstream(downstream.clone(), message).await.is_err() {
+                                break
+                            }
                             if let Err(_e) = downstream.clone().safe_lock(|s| {
                                 s.first_job_received = true;
                             }) {
@@ -232,8 +234,10 @@ impl Downstream {
                                         }
                                     };
 
-                                    Downstream::send_message_downstream(downstream.clone(), message)
-                                        .await;
+                                    if Downstream::send_message_downstream(downstream.clone(), message)
+                                        .await.is_err() {
+                                            break;
+                                        }
                                 }
                                 Err(_e) => {
                                     warn!("\nDownstream: Notify message channel failed\n");
@@ -312,7 +316,7 @@ impl Downstream {
     pub async fn accept_connections(
         downstream_addr: SocketAddr,
         tx_sv1_submit: Sender<(v1::client_to_server::Submit<'static>, Vec<u8>)>,
-        receiver_mining_notify: Receiver<server_to_client::Notify<'static>>,
+        receiver_mining_notify: tokio::sync::broadcast::Sender<server_to_client::Notify<'static>>,
         bridge: Arc<Mutex<crate::proxy::Bridge>>,
     ) {
         let downstream_listener = TcpListener::bind(downstream_addr).await.unwrap();
@@ -333,7 +337,7 @@ impl Downstream {
                     Downstream::new_downstream(
                         stream,
                         tx_sv1_submit.clone(),
-                        receiver_mining_notify.clone(),
+                        receiver_mining_notify.subscribe(),
                         opened.extranonce,
                         opened.last_notify,
                         opened.target,
@@ -349,7 +353,7 @@ impl Downstream {
     /// As SV1 messages come in, determines if the message response needs to be translated to SV2
     /// and sent to the `Upstream`, or if a direct response can be sent back by the `Translator`
     /// (SV1 and SV2 protocol messages are NOT 1-to-1).
-    async fn handle_incoming_sv1(self_: Arc<Mutex<Self>>, message_sv1: json_rpc::Message) {
+    async fn handle_incoming_sv1(self_: Arc<Mutex<Self>>, message_sv1: json_rpc::Message) -> Result<(), String> {
         // `handle_message` in `IsServer` trait + calls `handle_request`
         // TODO: Map err from V1Error to Error::V1Error
         let response = self_.safe_lock(|s| s.handle_message(message_sv1)).unwrap();
@@ -361,24 +365,28 @@ impl Downstream {
                     // message will be sent to the upstream Translator to be translated to SV2 and
                     // forwarded to the `Upstream`
                     // let sender = self_.safe_lock(|s| s.connection.sender_upstream)
-                    Self::send_message_downstream(self_, r.into()).await;
+                    Self::send_message_downstream(self_, r.into()).await
                 } else {
                     // If None response is received, indicates this SV1 message received from the
                     // Downstream MD is passed to the `Translator` for translation into SV2
+                    Ok(())
                 }
             }
             Err(e) => {
-                panic!("`{:?}`", e);
+                Err("".to_string())
             }
         }
     }
 
     /// Send SV1 response message that is generated by `Downstream` (as opposed to being received
     /// by `Bridge`) to be written to the SV1 Downstream role.
-    async fn send_message_downstream(self_: Arc<Mutex<Self>>, response: json_rpc::Message) {
+    async fn send_message_downstream(self_: Arc<Mutex<Self>>, response: json_rpc::Message) -> Result<(), String>{
         let sender = self_.safe_lock(|s| s.tx_outgoing.clone()).unwrap();
         debug!("To DOWN: {:?}", response);
-        sender.send(response).await.unwrap();
+       match sender.send(response).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e.to_string())
+       }
     }
 }
 

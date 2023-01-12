@@ -8,10 +8,11 @@ use args::Args;
 use error::{Error, ProxyResult};
 use proxy_config::ProxyConfig;
 use roles_logic_sv2::utils::Mutex;
+use tokio::sync::broadcast;
 
 const SELF_EXTRNONCE_LEN: usize = 2;
 
-use async_channel::{bounded, unbounded, Receiver, Sender};
+use async_std::channel::{bounded, unbounded, Receiver, Sender};
 use std::{
     net::{IpAddr, SocketAddr},
     str::FromStr,
@@ -67,9 +68,9 @@ async fn main() {
 
     // Sender/Receiver to send SV1 `mining.notify` message from the `Bridge` to the `Downstream`
     let (tx_sv1_notify, rx_sv1_notify): (
-        Sender<server_to_client::Notify>,
-        Receiver<server_to_client::Notify>,
-    ) = bounded(10);
+        tokio::sync::broadcast::Sender<server_to_client::Notify>,
+        tokio::sync::broadcast::Receiver<server_to_client::Notify>,
+    ) = broadcast::channel(10);
 
     // Format `Upstream` connection address
     let upstream_addr = SocketAddr::new(
@@ -131,7 +132,7 @@ async fn main() {
         tx_sv2_submit_shares_ext,
         rx_sv2_set_new_prev_hash,
         rx_sv2_new_ext_mining_job,
-        tx_sv1_notify,
+        tx_sv1_notify.clone(),
         extended_extranonce,
         target,
     )));
@@ -147,7 +148,7 @@ async fn main() {
     downstream_sv1::Downstream::accept_connections(
         downstream_addr,
         tx_sv1_submit,
-        rx_sv1_notify,
+        tx_sv1_notify,
         b,
     )
     .await;

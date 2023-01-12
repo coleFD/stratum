@@ -35,7 +35,7 @@ pub struct Bridge {
     rx_sv2_new_ext_mining_job: Receiver<NewExtendedMiningJob<'static>>,
     /// Sends SV1 `mining.notify` message (translated from the SV2 `SetNewPrevHash` and
     /// `NewExtendedMiningJob` messages stored in the `NextMiningNotify`) to the `Downstream`.
-    tx_sv1_notify: Sender<server_to_client::Notify<'static>>,
+    tx_sv1_notify: tokio::sync::broadcast::Sender<server_to_client::Notify<'static>>,
     /// Unique sequential identifier of the submit within the channel.
     channel_sequence_id: Id,
     /// Stores the most recent SV1 `mining.notify` values to be sent to the `Downstream` upon
@@ -62,7 +62,7 @@ impl Bridge {
         tx_sv2_submit_shares_ext: Sender<SubmitSharesExtended<'static>>,
         rx_sv2_set_new_prev_hash: Receiver<SetNewPrevHash<'static>>,
         rx_sv2_new_ext_mining_job: Receiver<NewExtendedMiningJob<'static>>,
-        tx_sv1_notify: Sender<server_to_client::Notify<'static>>,
+        tx_sv1_notify: tokio::sync::broadcast::Sender<server_to_client::Notify<'static>>,
         extranonces: ExtendedExtranonce,
         target: Arc<Mutex<Vec<u8>>>,
     ) -> Self {
@@ -250,7 +250,7 @@ impl Bridge {
                         );
                         // Get the sender to send the mining.notify to the Downstream
                         let tx_sv1_notify = self_.safe_lock(|s| s.tx_sv1_notify.clone()).unwrap();
-                        tx_sv1_notify.send(notify.clone()).await.unwrap();
+                        tx_sv1_notify.send(notify.clone()).unwrap();
                         self_
                             .safe_lock(|s| {
                                 s.last_notify = Some(notify);
@@ -320,7 +320,7 @@ impl Bridge {
                     );
                     // Get the sender to send the mining.notify to the Downstream
                     let tx_sv1_notify = self_.safe_lock(|s| s.tx_sv1_notify.clone()).unwrap();
-                    tx_sv1_notify.send(notify.clone()).await.unwrap();
+                    tx_sv1_notify.send(notify.clone()).unwrap();
                     self_
                         .safe_lock(|s| {
                             s.last_notify = Some(notify);
@@ -351,7 +351,7 @@ mod test {
             let (tx_sv2_submit_shares_ext, _rx_sv2_submit_shares_ext) = bounded(1);
             let (_tx_sv2_set_new_prev_hash, rx_sv2_set_new_prev_hash) = bounded(1);
             let (_tx_sv2_new_ext_mining_job, rx_sv2_new_ext_mining_job) = bounded(1);
-            let (tx_sv1_notify, _rx_sv1_notify) = bounded(1);
+            let (tx_sv1_notify, _rx_sv1_notify) = tokio::sync::broadcast::channel(1);
             let extranonces = ExtendedExtranonce::new(0..6, 6..8, 8..EXTRANONCE_LEN);
             let upstream_target = vec![
                 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
