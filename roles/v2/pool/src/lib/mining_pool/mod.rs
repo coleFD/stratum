@@ -154,7 +154,7 @@ impl Downstream {
             }
             Ok(SendTo::None(_)) => {}
             Ok(_) => panic!(),
-            Err(Error::UnexpectedMessage) => todo!(),
+            Err(Error::UnexpectedMessage(_message_type)) => todo!(),
             Err(_) => todo!(),
         }
         Ok(())
@@ -344,8 +344,12 @@ impl Pool {
 
             for (channel_id, downtream) in downstreams {
                 if let Some(to_send) = messages.remove(&channel_id) {
-                    Downstream::match_send_to(downtream.clone(), Ok(SendTo::Respond(to_send)))
-                        .await;
+                    if let Err(e) =
+                        Downstream::match_send_to(downtream.clone(), Ok(SendTo::Respond(to_send)))
+                            .await
+                    {
+                        error!("Unknown template provider message: {:?}", e);
+                    }
                 }
             }
             let res = self_
