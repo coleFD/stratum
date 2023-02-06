@@ -1,0 +1,33 @@
+# This job will create a PR from the versioning branch into main 
+# after the autoversion.yaml job pushes the version updates
+
+on:
+  push:
+    branches: [ versioning ]
+
+name: publish crate updates
+
+jobs:
+  autoversion:
+    if: github.actor == 'GitHub Actions Bot'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: setup git config
+        run: |
+          # setup the username and email. I tend to use 'GitHub Actions Bot' with no email by default
+          git config user.name "GitHub Actions Bot"
+          git config user.email "<>"
+
+    - name: Create pull request
+      uses: peter-evans/create-pull-request@v3
+      with:
+        commit-message: 'Automatic version bump'
+        branch: main
+        title: 'Automatic version bump'
+        body: 'This pull request was automatically created by a Github Action workflow to bump the version.'
+        
+      
