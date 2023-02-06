@@ -1,5 +1,5 @@
 [package]
-name = "sv1_api"
+name = "v1"
 version = "0.1.0"
 authors = ["user"]
 edition = "2018"
