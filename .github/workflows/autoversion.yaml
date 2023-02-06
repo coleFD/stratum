@@ -25,9 +25,6 @@ jobs:
 
         with:
           fetch-depth: 2
-          profile: minimal
-          toolchain: 1.65.0
-          override: true
       
       - name: setup git config
         run: |
@@ -46,7 +43,15 @@ jobs:
       - name: Commit version updates
         run: sh ./sv2-publish.sh -e -u --no-publish --no-push --no-changelog
 
-      - name: Push version updates to main
-        run: git push -f --no-verify origin main:versioning
+      # - name: Push version updates to main
+      #   run: git push -f --no-verify origin main:bot/versioning
+
+      - name: Create pull request
+      uses: peter-evans/create-pull-request@v3
+      with:
+        commit-message: 'Automatic version bump'
+        branch: main
+        title: 'Automatic version bump'
+        body: 'This pull request was automatically created by a Github Action workflow to bump the version.'
 
       
