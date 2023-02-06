@@ -25,9 +25,6 @@ jobs:
 
         with:
           fetch-depth: 2
-          profile: minimal
-          toolchain: 1.65.0
-          override: true
       
       - name: setup git config
         run: |
@@ -47,6 +44,6 @@ jobs:
         run: sh ./sv2-publish.sh -e -u --no-publish --no-push --no-changelog
 
       - name: Push version updates to main
-        run: git push -f --no-verify origin main:versioning
+        run: git push -f --no-verify origin main:bot/versioning
 
       
