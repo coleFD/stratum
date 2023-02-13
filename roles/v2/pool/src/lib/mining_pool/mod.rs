@@ -391,10 +391,13 @@ impl Pool {
         let range_1 = std::ops::Range { start: 0, end: 16 };
         let range_2 = std::ops::Range { start: 16, end: 32 };
         let ids = Arc::new(Mutex::new(roles_logic_sv2::utils::GroupId::new()));
-        let txout = TxOut {
-            value: crate::BLOCK_REWARD,
-            script_pubkey: Script::new_p2pk(&crate::new_pub_key()),
-        };
+        let pool_coinbase_outputs = config.coinbase_outputs.iter().map(|pub_key| {
+            TxOut {
+                // value will be updated by the addition of `ChannelFactory::split_outputs()` in PR #422
+                value: crate::BLOCK_REWARD,
+                script_pubkey: Script::new_p2pk(pub_key),
+            }
+        }).collect();
         let extranonces = ExtendedExtranonce::new(range_0, range_1, range_2);
         let creator = JobsCreators::new(32);
         let share_per_min = 1.0;
@@ -405,7 +408,7 @@ impl Pool {
             creator,
             share_per_min,
             kind,
-            vec![txout],
+            pool_coinbase_outputs,
         )));
         let pool = Arc::new(Mutex::new(Pool {
             downstreams: HashMap::new(),
