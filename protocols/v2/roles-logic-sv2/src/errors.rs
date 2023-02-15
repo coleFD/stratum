@@ -1,3 +1,4 @@
+use crate::common_properties::CommonDownstreamData;
 use binary_sv2::Error as BinarySv2Error;
 use std::fmt::{self, Display, Formatter};
 
@@ -15,6 +16,7 @@ pub enum Error {
     NoGroupIdOnExtendedChannel,
     /// (`min_v`, `max_v`, all flags supported)
     NoPairableUpstream((u16, u16, u32)),
+    NoCompatibleUpstream(CommonDownstreamData),
     /// Error if the hashmap `future_jobs` field in the `GroupChannelJobDispatcher` is empty.
     NoFutureJobs,
     NoDownstreamsConnected,
@@ -41,6 +43,7 @@ pub enum Error {
     NoTemplateForId,
     InvalidExtranonceSize(u16, u16),
     PoisonLock(String),
+    InvalidBip34Bytes(Vec<u8>),
 }
 
 impl From<BinarySv2Error> for Error {
@@ -74,6 +77,9 @@ impl Display for Error {
             NoGroupIdOnExtendedChannel => write!(f, "Extended channels do not have group IDs"),
             NoPairableUpstream(a) => {
                 write!(f, "No pairable upstream node: {:?}", a)
+            }
+            NoCompatibleUpstream(a) => {
+                write!(f, "No compatible upstream node: {:?}", a)
             }
             NoFutureJobs => write!(f, "GroupChannelJobDispatcher does not have any future jobs"),
             NoDownstreamsConnected => write!(f, "NoDownstreamsConnected"),
@@ -117,6 +123,7 @@ impl Display for Error {
             NoValidJob => write!(f, "Impossible to create a standard job for channelA cause no valid job has been received from upstream yet"),
             NoTemplateForId => write!(f, "Impossible a template for the required job id"),
             PoisonLock(e) => write!(f, "Poison lock: {}", e),
+            InvalidBip34Bytes(e) => write!(f, "Invalid Bip34 bytes {:?}", e),
         }
     }
 }
