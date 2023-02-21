@@ -37,6 +37,11 @@ members = [
     "roles/translator",
     "utils/network-helpers",
     "utils/buffer",
+    
+]
+
+exclude = [
+    "utils/message-generator",
     "examples/sv1-client-and-server",
     "examples/sv1-mining-device",
     "examples/ping-pong-with-noise",
@@ -46,8 +51,4 @@ members = [
     "examples/interop-cpp/template-provider/example-of-guix-build/quickcheck_macros",
     "examples/template-provider-test",
     "experimental/coinbase-negotiator",
-]
-
-exclude = [
-    "utils/message-generator",
 ]
