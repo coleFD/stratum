@@ -904,7 +904,6 @@ impl PoolChannelFactory {
         &mut self,
         m: SubmitSharesStandard,
     ) -> Result<OnNewShare, Error> {
-        #[allow(mutable_borrow_reservation_conflict)]
         match self.inner.channel_to_group_id.get(&m.channel_id) {
             Some(g_id) => {
                 let template_id = self
@@ -1176,7 +1175,6 @@ impl ProxyExtendedChannelFactory {
         &mut self,
         m: SubmitSharesStandard,
     ) -> Result<OnNewShare, Error> {
-        #[allow(mutable_borrow_reservation_conflict)]
         match self.inner.channel_to_group_id.get(&m.channel_id) {
             Some(g_id) => {
                 if let Some(job_creator) = self.job_creator.as_mut() {
