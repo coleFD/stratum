@@ -1,6 +1,7 @@
 mod args;
 mod downstream_sv1;
 mod error;
+mod utils;
 mod proxy;
 mod proxy_config;
 mod status;
@@ -85,6 +86,8 @@ async fn main() {
         proxy_config.upstream_port,
     );
 
+    let diff_config = Arc::new(Mutex::new(proxy_config.upstream_difficulty_config));
+
     // Instantiate a new `Upstream` (SV2 Pool)
     let upstream = match upstream_sv2::Upstream::new(
         upstream_addr,
@@ -96,6 +99,7 @@ async fn main() {
         tx_sv2_extranonce,
         status::Sender::Upstream(tx_status.clone()),
         target.clone(),
+        diff_config.clone()
     )
     .await
     {
@@ -173,6 +177,8 @@ async fn main() {
         tx_sv1_notify,
         status::Sender::DownstreamListener(tx_status.clone()),
         b,
+        proxy_config.downstream_difficulty_config,
+        diff_config
     );
 
     let mut interrupt_signal_future = Box::pin(tokio::signal::ctrl_c().fuse());

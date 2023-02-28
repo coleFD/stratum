@@ -3,6 +3,7 @@ use roles_logic_sv2::parsers::PoolMessages;
 
 pub mod upstream;
 pub mod upstream_connection;
+pub mod diff_management;
 pub use upstream::Upstream;
 pub use upstream_connection::UpstreamConnection;
 

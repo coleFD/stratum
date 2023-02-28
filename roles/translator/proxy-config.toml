@@ -18,3 +18,18 @@ min_supported_version = 2
 
 # Minimum extranonce2 size
 min_extranonce2_size = 16
+
+# Difficulty params
+[downstream_difficulty_config]
+# hashes/s of the weakest miner that will be connecting
+min_individual_miner_hashrate=0.000_005
+# interval in seconds to elapse before updating the hashrate of a downstream connection
+miner_num_submits_before_update=5
+# target number of shares per minute the miner should be sending
+shares_per_minute = 2.0
+
+[upstream_difficulty_config]
+# interval in seconds to elapse before updating channel hashrate with the pool
+channel_diff_update_interval = 60
+# estimated accumulated hashrate of all downstream miners
+channel_nominal_hashrate = 0.000_005

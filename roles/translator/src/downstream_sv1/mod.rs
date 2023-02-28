@@ -1,5 +1,6 @@
 use v1::utils::HexU32Be;
 pub mod downstream;
+pub mod diff_management;
 pub use downstream::Downstream;
 
 /// This constant is used as a check to ensure clients

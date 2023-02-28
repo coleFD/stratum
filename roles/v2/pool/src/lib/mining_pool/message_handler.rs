@@ -80,7 +80,7 @@ impl ParseDownstreamMiningMessages<(), NullDownstreamMiningSelector, NoRouting> 
         }
     }
 
-    fn handle_update_channel(&mut self, _: UpdateChannel) -> Result<SendTo<()>, Error> {
+    fn handle_update_channel(&mut self, m: UpdateChannel) -> Result<SendTo<()>, Error> {
         todo!()
     }
 
