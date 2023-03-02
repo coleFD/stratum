@@ -1,10 +1,10 @@
 use crate::{
     downstream_sv1::Downstream,
     error::Error::{CodecNoise, PoisonLock, UpstreamIncoming},
+    proxy_config::UpstreamDifficultyConfig,
     status,
     upstream_sv2::{EitherFrame, Message, StdFrame, UpstreamConnection},
     ProxyResult,
-    proxy_config::UpstreamDifficultyConfig,
 };
 use async_channel::{Receiver, Sender};
 use async_std::{net::TcpStream, task};
@@ -22,7 +22,7 @@ use roles_logic_sv2::{
     },
     mining_sv2::{
         ExtendedExtranonce, Extranonce, NewExtendedMiningJob, OpenExtendedMiningChannel,
-        SetNewPrevHash, SubmitSharesExtended, UpdateChannel,
+        SetNewPrevHash, SubmitSharesExtended,
     },
     parsers::Mining,
     routing_logic::{CommonRoutingLogic, MiningRoutingLogic, NoRouting},
@@ -80,9 +80,9 @@ pub struct Upstream {
     pub min_extranonce_size: u16,
     // values used to update the channel with the correct nominal hashrate.
     // each Downstream instance will add and subtract their hashrates as needed
-    // and the upstream just needs to occasionally check if it has changed more than 
+    // and the upstream just needs to occasionally check if it has changed more than
     // than the configured percentage
-    pub(super) difficulty_config: Arc<Mutex<UpstreamDifficultyConfig>>
+    pub(super) difficulty_config: Arc<Mutex<UpstreamDifficultyConfig>>,
 }
 
 impl PartialEq for Upstream {
@@ -154,7 +154,7 @@ impl Upstream {
             tx_sv2_extranonce,
             tx_status,
             target,
-            difficulty_config
+            difficulty_config,
         })))
     }
 
@@ -211,17 +211,20 @@ impl Upstream {
         )?;
 
         // Send open channel request before returning
-        let nominal_hash_rate = self_.safe_lock(|u| 
-            u.difficulty_config.safe_lock(|c|c.channel_nominal_hashrate)
-            .map_err(|_e| PoisonLock)
-        ).map_err(|_e| PoisonLock)??;
+        let nominal_hash_rate = self_
+            .safe_lock(|u| {
+                u.difficulty_config
+                    .safe_lock(|c| c.channel_nominal_hashrate)
+                    .map_err(|_e| PoisonLock)
+            })
+            .map_err(|_e| PoisonLock)??;
         let user_identity = "ABC".to_string().try_into()?;
         let min_extranonce_size = self_
             .safe_lock(|s| s.min_extranonce_size)
             .map_err(|_e| PoisonLock)?;
         let open_channel = Mining::OpenExtendedMiningChannel(OpenExtendedMiningChannel {
-            request_id: 0,                       // TODO
-            user_identity,                       // TODO
+            request_id: 0, // TODO
+            user_identity, // TODO
             nominal_hash_rate,
             max_target: u256_from_int(u64::MAX), // TODO
             min_extranonce_size,
@@ -381,14 +384,10 @@ impl Upstream {
                 }
 
                 // check if channel needs to be updated
-                handle_result!(
-                    tx_status,
-                    Self::try_update_hashrate(self_.clone()).await 
-                );
+                handle_result!(tx_status, Self::try_update_hashrate(self_.clone()).await);
             }
         });
 
-        
         Ok(())
     }
 
@@ -458,7 +457,7 @@ impl Upstream {
     }
 
     // async fn handle_update_hashrate(self_: Arc<Mutex<Self>>) -> ProxyResult<'static, ()> {
-    //     let (channel_id_option, difficulty_config, tx_frame) = self_.safe_lock(|u| 
+    //     let (channel_id_option, difficulty_config, tx_frame) = self_.safe_lock(|u|
     //         (
     //             u.channel_id.clone(),
     //             u.difficulty_config.clone(),

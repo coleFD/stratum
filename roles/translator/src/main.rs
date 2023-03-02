@@ -1,11 +1,11 @@
 mod args;
 mod downstream_sv1;
 mod error;
-mod utils;
 mod proxy;
 mod proxy_config;
 mod status;
 mod upstream_sv2;
+mod utils;
 use args::Args;
 use error::{Error, ProxyResult};
 use proxy_config::ProxyConfig;
@@ -99,7 +99,7 @@ async fn main() {
         tx_sv2_extranonce,
         status::Sender::Upstream(tx_status.clone()),
         target.clone(),
-        diff_config.clone()
+        diff_config.clone(),
     )
     .await
     {
@@ -178,7 +178,7 @@ async fn main() {
         status::Sender::DownstreamListener(tx_status.clone()),
         b,
         proxy_config.downstream_difficulty_config,
-        diff_config
+        diff_config,
     );
 
     let mut interrupt_signal_future = Box::pin(tokio::signal::ctrl_c().fuse());

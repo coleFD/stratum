@@ -1,4 +1,9 @@
-use crate::{downstream_sv1, status, ProxyResult, error::Error, proxy_config::{DownstreamDifficultyConfig, UpstreamDifficultyConfig}};
+use crate::{
+    downstream_sv1,
+    error::Error,
+    proxy_config::{DownstreamDifficultyConfig, UpstreamDifficultyConfig},
+    status,
+};
 use async_channel::{bounded, Receiver, Sender};
 use async_std::{
     io::BufReader,
@@ -13,17 +18,17 @@ use tokio::sync::broadcast;
 use super::{kill, SUBSCRIBE_TIMEOUT_SECS};
 
 use roles_logic_sv2::{
-    bitcoin::util::uint::Uint256,
     common_properties::{IsDownstream, IsMiningDownstream},
     utils::Mutex,
 };
 
 use futures::select;
 
-use std::{net::SocketAddr, ops::Div, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tracing::{debug, info, warn};
 use v1::{
-    client_to_server::{self, Submit}, json_rpc, server_to_client,
+    client_to_server::{self, Submit},
+    json_rpc, server_to_client,
     utils::{Extranonce, HexU32Be},
     IsServer,
 };
@@ -51,10 +56,36 @@ pub struct Downstream {
     first_job_received: bool,
     extranonce2_len: usize,
     pub(super) difficulty_mgmt: DownstreamDifficultyConfig,
-    pub(super) upstream_difficulty_config: Arc<Mutex<UpstreamDifficultyConfig>>
+    pub(super) upstream_difficulty_config: Arc<Mutex<UpstreamDifficultyConfig>>,
 }
 
 impl Downstream {
+    #[cfg(test)]
+    pub fn new(
+        authorized_names: Vec<String>,
+        extranonce1: Vec<u8>,
+        version_rolling_mask: Option<HexU32Be>,
+        version_rolling_min_bit: Option<HexU32Be>,
+        tx_sv1_submit: Sender<(v1::client_to_server::Submit<'static>, Vec<u8>)>,
+        tx_outgoing: Sender<json_rpc::Message>,
+        first_job_received: bool,
+        extranonce2_len: usize,
+        difficulty_mgmt: DownstreamDifficultyConfig,
+        upstream_difficulty_config: Arc<Mutex<UpstreamDifficultyConfig>>,
+    ) -> Self {
+        Downstream {
+            authorized_names,
+            extranonce1,
+            version_rolling_mask,
+            version_rolling_min_bit,
+            tx_sv1_submit,
+            tx_outgoing,
+            first_job_received,
+            extranonce2_len,
+            difficulty_mgmt,
+            upstream_difficulty_config,
+        }
+    }
     /// Instantiate a new `Downstream`.
     #[allow(clippy::too_many_arguments)]
     pub async fn new_downstream(
@@ -64,7 +95,6 @@ impl Downstream {
         tx_status: status::Sender,
         extranonce1: Vec<u8>,
         last_notify: Option<server_to_client::Notify<'static>>,
-        channel_target: Arc<Mutex<Vec<u8>>>,
         extranonce2_len: usize,
         difficulty_config: DownstreamDifficultyConfig,
         upstream_difficulty_config: Arc<Mutex<UpstreamDifficultyConfig>>,
@@ -90,7 +120,7 @@ impl Downstream {
             first_job_received: false,
             extranonce2_len,
             difficulty_mgmt: difficulty_config,
-            upstream_difficulty_config
+            upstream_difficulty_config,
         }));
         let self_ = downstream.clone();
 
@@ -131,7 +161,7 @@ impl Downstream {
                                         handle_result!(tx_status_reader, Self::save_share(self_.clone()));
                                     }
                                 }
-                                
+
                                 let res = Self::handle_incoming_sv1(self_.clone(), incoming).await;
                                 handle_result!(tx_status_reader, res);
                             }
@@ -202,14 +232,21 @@ impl Downstream {
                     }
                 };
                 if is_a && !first_sent && last_notify.is_some() {
-                    let target = handle_result!(tx_status_notify, Self::hash_rate_to_target(downstream.clone()));
-                    let message = handle_result!(tx_status_notify, Self::get_set_difficulty(target));
+                    let target = handle_result!(
+                        tx_status_notify,
+                        Self::hash_rate_to_target(downstream.clone())
+                    );
+                    let message =
+                        handle_result!(tx_status_notify, Self::get_set_difficulty(target));
                     handle_result!(
                         tx_status_notify,
                         Downstream::send_message_downstream(downstream.clone(), message).await
                     );
                     // make sure the mining start time is initialized and reset number of shares submitted
-                    handle_result!(tx_status_notify, Self::init_difficulty_management(downstream.clone()));
+                    handle_result!(
+                        tx_status_notify,
+                        Self::init_difficulty_management(downstream.clone())
+                    );
 
                     let sv1_mining_notify_msg = last_notify.clone().unwrap();
                     let message: json_rpc::Message =
@@ -263,7 +300,7 @@ impl Downstream {
         tx_status: status::Sender,
         bridge: Arc<Mutex<crate::proxy::Bridge>>,
         downstream_difficulty_config: DownstreamDifficultyConfig,
-        upstream_difficulty_config: Arc<Mutex<UpstreamDifficultyConfig>>
+        upstream_difficulty_config: Arc<Mutex<UpstreamDifficultyConfig>>,
     ) {
         task::spawn(async move {
             let downstream_listener = TcpListener::bind(downstream_addr).await.unwrap();
@@ -289,7 +326,6 @@ impl Downstream {
                             tx_status.listener_to_connection(),
                             opened.extranonce,
                             opened.last_notify,
-                            opened.target,
                             opened.extranonce2_len as usize,
                             downstream_difficulty_config.clone(),
                             upstream_difficulty_config.clone(),
@@ -297,8 +333,8 @@ impl Downstream {
                         .await;
                     }
                     Err(e) => {
-                        tracing::error!("Failed to create a new downstream connection")
-                    },
+                        tracing::error!("Failed to create a new downstream connection: {:?}", e);
+                    }
                 }
             }
         });

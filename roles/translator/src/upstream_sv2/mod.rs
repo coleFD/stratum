@@ -1,9 +1,9 @@
 use codec_sv2::{StandardEitherFrame, StandardSv2Frame};
 use roles_logic_sv2::parsers::PoolMessages;
 
+pub mod diff_management;
 pub mod upstream;
 pub mod upstream_connection;
-pub mod diff_management;
 pub use upstream::Upstream;
 pub use upstream_connection::UpstreamConnection;
 

@@ -107,7 +107,10 @@ impl Bridge {
         }
     }
 
-    pub fn on_new_sv1_connection(&mut self, hash_rate: f32) -> ProxyResult<'static, OpenSv1Downstream> {
+    pub fn on_new_sv1_connection(
+        &mut self,
+        hash_rate: f32,
+    ) -> ProxyResult<'static, OpenSv1Downstream> {
         match self.channel_factory.new_extended_channel(0, hash_rate, 0) {
             Some(messages) => {
                 for message in messages {
@@ -115,7 +118,9 @@ impl Bridge {
                         Mining::OpenExtendedMiningChannelSuccess(success) => {
                             let extranonce = success.extranonce_prefix.to_vec();
                             let extranonce2_len = success.extranonce_size;
-                            self.target.safe_lock(|t| *t = success.target.to_vec()).map_err(|_e| PoisonLock)?;
+                            self.target
+                                .safe_lock(|t| *t = success.target.to_vec())
+                                .map_err(|_e| PoisonLock)?;
                             return Ok(OpenSv1Downstream {
                                 last_notify: self.last_notify.clone(),
                                 extranonce,
@@ -130,9 +135,15 @@ impl Bridge {
                     }
                 }
             }
-            None => return Err(Error::SubprotocolMining("Bridge: failed to open new extended channel".to_string())),
+            None => {
+                return Err(Error::SubprotocolMining(
+                    "Bridge: failed to open new extended channel".to_string(),
+                ))
+            }
         };
-        Err(Error::SubprotocolMining("Bridge: Invalid mining message when opening downstream connection".to_string()))
+        Err(Error::SubprotocolMining(
+            "Bridge: Invalid mining message when opening downstream connection".to_string(),
+        ))
     }
 
     /// Starts the tasks that receive SV1 and SV2 messages to be translated and sent to their

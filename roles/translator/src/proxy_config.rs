@@ -27,7 +27,8 @@ pub struct DownstreamDifficultyConfig {
 
 impl PartialEq for DownstreamDifficultyConfig {
     fn eq(&self, other: &Self) -> bool {
-        other.min_individual_miner_hashrate.round() as u32 == self.min_individual_miner_hashrate.round() as u32 
+        other.min_individual_miner_hashrate.round() as u32
+            == self.min_individual_miner_hashrate.round() as u32
     }
 }
 
@@ -40,4 +41,3 @@ pub struct UpstreamDifficultyConfig {
     #[serde(default = "u64::default")]
     pub timestamp_of_last_update: u64,
 }
-
