@@ -14,8 +14,9 @@ use std::sync::Arc;
 use tracing::debug;
 
 impl Upstream {
+    /// this function checks if the elapsed time since the last update has surpassed the config
     pub(super) async fn try_update_hashrate(self_: Arc<Mutex<Self>>) -> ProxyResult<'static, ()> {
-        let (channel_id_option, diff_mgmt, _tx_frame) = self_
+        let (channel_id_option, diff_mgmt, tx_frame) = self_
             .safe_lock(|u| {
                 (
                     u.channel_id,
@@ -24,6 +25,10 @@ impl Upstream {
                 )
             })
             .map_err(|_e| PoisonLock)?;
+        // dont run this if we shouldnt be aggregating hashrate
+        let should_aggregate = diff_mgmt.safe_lock(|d| d.should_aggregate).map_err(|_e| PoisonLock)?;
+        if !should_aggregate {return Ok(());}
+
         let channel_id = channel_id_option.ok_or(crate::Error::RolesSv2Logic(
             RolesLogicError::NotFoundChannelId,
         ))?;
@@ -52,15 +57,14 @@ impl Upstream {
             let message = Message::Mining(Mining::UpdateChannel(update_channel));
             debug!("{:?}", &message);
             let either_frame: StdFrame = message.try_into()?;
-            let _frame: EitherFrame = either_frame.try_into()?;
-            // Keep commented until UpdateChannel is implemented in the pool
+            let frame: EitherFrame = either_frame.try_into()?;
 
-            // tx_frame.send(frame).await
-            // .map_err(|e| {
-            //     crate::Error::ChannelErrorSender(
-            //         crate::error::ChannelSendError::General(e.to_string()),
-            //     )
-            // })?;
+            tx_frame.send(frame).await
+            .map_err(|e| {
+                crate::Error::ChannelErrorSender(
+                    crate::error::ChannelSendError::General(e.to_string()),
+                )
+            })?;
         }
         Ok(())
     }

@@ -6,6 +6,10 @@ use std::{ops::Div, sync::Arc};
 use v1::json_rpc;
 
 impl Downstream {
+
+    /// initializes the timestamp and resets the number of submits for a connection.
+    /// Should only be called once for the lifetime of a connection since `try_update_difficulty_settings()`
+    /// also does this during this update
     pub fn init_difficulty_management(self_: Arc<Mutex<Self>>) -> ProxyResult<'static, ()> {
         self_
             .safe_lock(|d| {
@@ -19,7 +23,10 @@ impl Downstream {
             .map_err(|_e| Error::PoisonLock)?;
         Ok(())
     }
-    pub async fn try_update_difficult_settings(
+
+    /// if enough shares have been submitted according to the config, this function updates the difficulty for the connection and sends the new
+    /// difficulty to the miner
+    pub async fn try_update_difficulty_settings(
         self_: Arc<Mutex<Self>>,
     ) -> ProxyResult<'static, ()> {
         let diff_mgmt = self_
@@ -35,15 +42,21 @@ impl Downstream {
             diff_mgmt.submits_since_last_update
         );
         if diff_mgmt.submits_since_last_update >= diff_mgmt.miner_num_submits_before_update {
-            let target = roles_logic_sv2::utils::hash_rate_to_target(
+            let prev_target = roles_logic_sv2::utils::hash_rate_to_target(
                 diff_mgmt.min_individual_miner_hashrate,
                 diff_mgmt.shares_per_minute,
             )
             .to_vec();
-            tracing::debug!("TARGET FROM HASH RATE: {:?}", &target);
-            if Self::update_miner_hashrate(self_.clone(), target.clone())?.is_some() {
+            tracing::debug!("TARGET FROM HASH RATE: {:?}", &prev_target);
+            if let Some(new_hash_rate) = Self::update_miner_hashrate(self_.clone(), prev_target.clone())? {
                 #[cfg(not(test))]
-                let message = Self::get_set_difficulty(target)?;
+                let new_target = roles_logic_sv2::utils::hash_rate_to_target(
+                    new_hash_rate,
+                    diff_mgmt.shares_per_minute,
+                )
+                .to_vec();
+                #[cfg(not(test))]
+                let message = Self::get_set_difficulty(new_target)?;
                 #[cfg(not(test))]
                 Downstream::send_message_downstream(self_.clone(), message).await?;
             }
@@ -51,6 +64,7 @@ impl Downstream {
         Ok(())
     }
 
+    /// calculates the target according to the current stored hashrate of the miner
     pub fn hash_rate_to_target(self_: Arc<Mutex<Self>>) -> ProxyResult<'static, Vec<u8>> {
         let target = self_
             .safe_lock(|d| {
@@ -64,6 +78,7 @@ impl Downstream {
         Ok(target)
     }
 
+    /// increments the number of shares since the last difficulty update
     pub(super) fn save_share(self_: Arc<Mutex<Self>>) -> ProxyResult<'static, ()> {
         tracing::info!("SAVED SHARE");
         self_
@@ -111,13 +126,13 @@ impl Downstream {
         }
     }
 
-    /// if enough time has passed, it updates the hash rate for the Downstream with the equation:
-    /// `hash_rate = difficulty * pdiff * num_shares_since_last_update / seconds_since_last_update`
-    /// and resets the tracked number of submitted shares.
+    /// This function updates the miner hashrate and resets difficulty management params. To calculate hashrate it calculates the realized shares per minute from the number of shares submitted 
+    /// and the delta time since last update. It then uses the realized shares per minute and the target those shares where mined on to calculate an estimated hashrate during that period with the
+    /// function [`roles_logic_sv2::utils::hash_rate_from_target`]. Lastly, it adjusts the `channel_nominal_hashrate` according to the change in estimated miner hashrate
     pub fn update_miner_hashrate(
         self_: Arc<Mutex<Self>>,
         miner_target: Vec<u8>,
-    ) -> ProxyResult<'static, Option<()>> {
+    ) -> ProxyResult<'static, Option<f32>> {
         self_
             .safe_lock(|d| {
                 let timestamp_secs = std::time::SystemTime::now()
@@ -149,7 +164,7 @@ impl Downstream {
                 d.upstream_difficulty_config
                     .safe_lock(|c| {
                         c.actual_nominal_hashrate += hashrate_delta;
-                        Some(())
+                        Some(new_miner_hashrate)
                     })
                     .map_err(|_e| Error::PoisonLock)
             })
@@ -181,11 +196,12 @@ mod test {
 
     use crate::downstream_sv1::Downstream;
 
+    // test ability to approach target share per minute. Currently set to test against 20% error
     #[tokio::test]
     async fn test_diff_management() {
         let downstream_conf = DownstreamDifficultyConfig {
             min_individual_miner_hashrate: 0.0, // updated below
-            miner_num_submits_before_update: 3, // update after 5 submits
+            miner_num_submits_before_update: 10, // update after 5 submits
             shares_per_minute: 10.0,            // 10 shares per minute
             submits_since_last_update: 0,
             timestamp_of_last_update: 0, // updated below
@@ -195,6 +211,7 @@ mod test {
             channel_nominal_hashrate: 0.0,
             actual_nominal_hashrate: 0.0,
             timestamp_of_last_update: 0,
+            should_aggregate: false
         };
         let (tx_sv1_submit, _rx_sv1_submit) = unbounded();
         let (tx_outgoing, _rx_outgoing) = unbounded();
@@ -212,7 +229,7 @@ mod test {
             Arc::new(Mutex::new(upstream_config)),
         );
 
-        let total_run_time = std::time::Duration::from_secs(600);
+        let total_run_time = std::time::Duration::from_secs(300);
         let config_shares_per_minute = downstream_conf.shares_per_minute;
         // get initial hashrate
         let initial_nominal_hashrate = measure_hashrate(10);
@@ -236,7 +253,7 @@ mod test {
             // start hashing util a target is met and submit to
             mock_mine(target.clone().into());
             Downstream::save_share(downstream.clone()).unwrap();
-            Downstream::try_update_difficult_settings(downstream.clone())
+            Downstream::try_update_difficulty_settings(downstream.clone())
                 .await
                 .unwrap();
             target = downstream
@@ -250,8 +267,14 @@ mod test {
             elapsed = timer.elapsed();
             count += 1;
             println!("Submitted {:?} share in {:?} seconds", count, elapsed);
+            let calculated_share_per_min = count as f32 / (elapsed.as_secs_f32() / 60.0);
+            println!(
+                "Actual Share/Min {:?}",calculated_share_per_min
+            );
         }
 
+        let calculated_share_per_min = count as f32 / (elapsed.as_secs_f32() / 60.0);
+        
         println!(
             "CALCULATED HASHRATE: {:?}",
             downstream
@@ -259,6 +282,12 @@ mod test {
                 .safe_lock(|d| d.difficulty_mgmt.min_individual_miner_hashrate)
                 .unwrap()
         );
+        println!(
+            "Actual Share/Min {:?}",calculated_share_per_min
+        );
+        let calculated_share_per_min = count as f32 / (elapsed.as_secs_f32() / 60.0);
+        let err = 1.0 - (config_shares_per_minute -  calculated_share_per_min / config_shares_per_minute).abs();
+        assert!(err < 0.2, "Calculated share_per_min does not meet 20% error");
     }
 
     fn mock_mine(target: Target) -> U256<'static> {

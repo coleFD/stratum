@@ -40,4 +40,7 @@ pub struct UpstreamDifficultyConfig {
     pub actual_nominal_hashrate: f32,
     #[serde(default = "u64::default")]
     pub timestamp_of_last_update: u64,
+    #[serde(default = "bool::default")]
+    pub should_aggregate: bool
+
 }

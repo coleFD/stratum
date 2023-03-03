@@ -266,7 +266,7 @@ impl Downstream {
                     select! {
                         res = rx_sv1_notify.recv().fuse() => {
                             // if hashrate has changed, update difficulty management, and send new mining.set_difficulty
-                            handle_result!(tx_status_notify, Self::try_update_difficult_settings(downstream.clone()).await);
+                            handle_result!(tx_status_notify, Self::try_update_difficulty_settings(downstream.clone()).await);
 
 
                             let sv1_mining_notify_msg = handle_result!(tx_status_notify, res);
