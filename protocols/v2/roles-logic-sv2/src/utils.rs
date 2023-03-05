@@ -174,8 +174,10 @@ fn reduce_path<T: AsRef<[u8]>>(coinbase_id: [u8; 32], path: &[T]) -> [u8; 32] {
 /// bdiff: 0x00000000ffff0000000000000000000000000000000000000000000000000000
 /// https://en.bitcoin.it/wiki/Difficulty#How_soon_might_I_expect_to_generate_a_block.3F
 pub fn hash_rate_to_target(h: f32, share_per_min: f32) -> U256<'static> {
-    // ensure no overflow
-    let hashrate_from_nominal: u128 = if h < 1.0 {
+    // ensure no overflow converting to h/s
+    let hashrate_from_nominal: u128 = if h < 0.001 {
+        (h as f64 * 1_000_000_000_000.0) as u128
+    } else if h < 1.0 {
         (h as f64 * 1_000_000_000.0) as u128 * 1_000
     } else {
         (h as f64 * 1_000.0) as u128 * 1_000_000_000
@@ -743,48 +745,47 @@ mod tests {
         let mut rng = rand::thread_rng();
         let mut successes = 0;
 
-        let hr = 0.000_000_1;
-        let hrs = hr * 60.0;
+        const UNIT_THS: f64 = 1_000_000_000_000.0;
+
+        let hr =0.000_000_000_01; // 10 h/s
+        let hrs = hr * 60.0; // number of hashes in 1 minute
         let mut target = hash_rate_to_target(hr, 1.0);
         let target =
             bitcoin::util::uint::Uint256::from_be_slice(&target.inner_as_mut()[..]).unwrap();
-        println!("TARGET: {:?}", target);
-        // let mut i: i64 = 0;
-        // let mut results = vec![];
-        // let attempts = 1000;
-        // while successes < attempts {
-        //     let a: u128 = rng.gen();
-        //     let b: u128 = rng.gen();
-        //     let a = a.to_be_bytes();
-        //     let b = b.to_be_bytes();
-        //     let concat = [&a[..], &b[..]].concat().to_vec();
-        //     i += 1;
-        //     if bitcoin::util::uint::Uint256::from_be_slice(&concat[..]).unwrap() <= target {
-        //         results.push(i);
-        //         i = 0;
-        //         successes += 1;
-        //     }
-        // }
 
-        // let mut average: f32 = 0.0;
-        // for i in &results {
-        //     average = average + (*i as f32) / attempts as f32;
-        // }
-        // let delta = (hrs - average) as i64;
-        // assert!(delta.abs() < 100);
+        let mut i: i64 = 0;
+        let mut results = vec![];
+        let attempts = 1000;
+        while successes < attempts {
+            let a: u128 = rng.gen();
+            let b: u128 = rng.gen();
+            let a = a.to_be_bytes();
+            let b = b.to_be_bytes();
+            let concat = [&a[..], &b[..]].concat().to_vec();
+            i += 1;
+            if bitcoin::util::uint::Uint256::from_be_slice(&concat[..]).unwrap() <= target {
+                results.push(i);
+                i = 0;
+                successes += 1;
+            }
+        }
+
+        let mut average: f32 = 0.0;
+        for i in &results {
+            average = average + (*i as f32) / attempts as f32;
+        }
+        let delta = (((hrs as f64) * UNIT_THS) - (average as f64)) as i64;
+        assert!(delta.abs() < 100);
     }
 
     #[test]
     fn test_hash_rate_from_target() {
-        // let mut rng = rand::thread_rng();
-        // let mut successes = 0;
 
         let hr = 10.0;
         let expected_share_per_min = 1.0;
         let target = hash_rate_to_target(hr, expected_share_per_min);
-        let realized_share_per_min = expected_share_per_min * 10.0;
+        let realized_share_per_min = expected_share_per_min * 10.0; // increase SPM by 10x
         let hash_rate = hash_rate_from_target(target, realized_share_per_min);
-        println!("HASH_RATE: {:?}", hash_rate);
         // assert the hash_rate is the is the same as the initial set to ensure `hash_rate_from_target` is the
         // inverse of `hash_rate_to_target`
         assert!(
