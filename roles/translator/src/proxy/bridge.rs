@@ -171,14 +171,19 @@ impl Bridge {
                     .map_err(|_| PoisonLock);
                 handle_result!(tx_status, res);
 
-                let SubmitShareWithChannelId {channel_id, share: sv1_submit, extranonce} =
-                    handle_result!(tx_status, rx_sv1_submit.clone().recv().await);
+                let SubmitShareWithChannelId {
+                    channel_id,
+                    share: sv1_submit,
+                    extranonce,
+                } = handle_result!(tx_status, rx_sv1_submit.clone().recv().await);
                 let channel_sequence_id = self_
                     .safe_lock(|s| s.channel_sequence_id.next())
                     .map_err(|_| PoisonLock);
                 let channel_sequence_id = handle_result!(tx_status, channel_sequence_id) - 1;
                 let sv2_submit = self_
-                    .safe_lock(|s| s.translate_submit(channel_id, channel_sequence_id, sv1_submit, extranonce))
+                    .safe_lock(|s| {
+                        s.translate_submit(channel_id, channel_sequence_id, sv1_submit, extranonce)
+                    })
                     .map_err(|_| PoisonLock);
                 let sv2_submit = handle_result!(tx_status, handle_result!(tx_status, sv2_submit));
                 let mut send_upstream = false;
@@ -237,7 +242,7 @@ impl Bridge {
         };
 
         Ok(SubmitSharesExtended {
-            channel_id: channel_id,
+            channel_id,
             sequence_number: channel_sequence_id,
             job_id: sv1_submit.job_id.parse::<u32>()?,
             nonce: sv1_submit.nonce.0,
@@ -356,34 +361,29 @@ impl Bridge {
                 handle_result!(tx_status, handle_result!(tx_status, res));
 
                 let last_p_hash_res = self_
-                .safe_lock(|s| 
-                    s.last_p_hash.clone().ok_or(Error::RolesSv2Logic(RolesLogicError::JobIsNotFutureButPrevHashNotPresent))
-                ).map_err(|_| PoisonLock);
+                    .safe_lock(|s| {
+                        s.last_p_hash.clone().ok_or(Error::RolesSv2Logic(
+                            RolesLogicError::JobIsNotFutureButPrevHashNotPresent,
+                        ))
+                    })
+                    .map_err(|_| PoisonLock);
 
-                let last_p_hash = handle_result!(tx_status, handle_result!(tx_status, last_p_hash_res));
+                let last_p_hash =
+                    handle_result!(tx_status, handle_result!(tx_status, last_p_hash_res));
 
                 // If future_job=true, this job is meant for a future SetNewPrevHash that the proxy
                 // has yet to receive. Insert this new job into the job_mapper .
                 info!("NEMJ: {:?}", &sv2_new_extended_mining_job);
-                if sv2_new_extended_mining_job.future_job {
+                if sv2_new_extended_mining_job.future_job
+                    && last_p_hash.job_id != sv2_new_extended_mining_job.job_id
+                {
                     let res = self_
                         .safe_lock(|s| s.future_jobs.push(sv2_new_extended_mining_job.clone()))
                         .map_err(|_| PoisonLock);
                     handle_result!(tx_status, res);
 
                 // If future_job=false, this job is meant for the current SetNewPrevHash.
-                } else {
-                    let last_p_hash_res = self_
-                        .safe_lock(|s| s.last_p_hash.clone())
-                        .map_err(|_| PoisonLock);
-                    let last_p_hash_option = handle_result!(tx_status, last_p_hash_res);
-                    // last_p_hash is an Option<SetNewPrevHash> so we need to map to the correct error type to be handled
-                    let last_p_hash = handle_result!(
-                        tx_status,
-                        last_p_hash_option.ok_or(Error::RolesSv2Logic(
-                            RolesLogicError::JobIsNotFutureButPrevHashNotPresent
-                        ))
-                    );
+                } else if last_p_hash.job_id == sv2_new_extended_mining_job.job_id {
                     // Create the mining.notify to be sent to the Downstream.
                     let notify = crate::proxy::next_mining_notify::create_notify(
                         last_p_hash,
@@ -515,11 +515,16 @@ mod test {
             .on_new_extended_mining_job(new_mining_job.clone())
             .unwrap();
 
-        // pass sv1_submit into Bridge::translate_submit 
+        // pass sv1_submit into Bridge::translate_submit
         let sv1_submit = test_utils::create_sv1_submit(0);
         let channel_seq_id = bridge.channel_sequence_id.next() - 1;
         let sv2_message = bridge
-            .translate_submit(channel_id, channel_seq_id, sv1_submit, vec![0, 0, 0, 0, 0, 0, 0, 0])
+            .translate_submit(
+                channel_id,
+                channel_seq_id,
+                sv1_submit,
+                vec![0, 0, 0, 0, 0, 0, 0, 0],
+            )
             .unwrap();
         // assert sv2 message equals sv1 with version bits added
         assert_eq!(
