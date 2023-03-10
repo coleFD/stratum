@@ -101,6 +101,8 @@ impl ParseDownstreamMiningMessages<(), NullDownstreamMiningSelector, NoRouting> 
                 roles_logic_sv2::channel_logic::channel_factory::OnNewShare::RelaySubmitShareUpstream => unreachable!(),
                 roles_logic_sv2::channel_logic::channel_factory::OnNewShare::ShareMeetBitcoinTarget((share,t_id,coinbase)) => {
                     info!("Found share that meet bitcoin target");
+                    println!("VERSION: {:?}", share.get_version());
+                    println!("VERSION LE: {:?}", share.get_version().to_le());
                     let solution = SubmitSolution {
                         template_id: t_id,
                         version: share.get_version(),
@@ -152,12 +154,15 @@ impl ParseDownstreamMiningMessages<(), NullDownstreamMiningSelector, NoRouting> 
                 roles_logic_sv2::channel_logic::channel_factory::OnNewShare::RelaySubmitShareUpstream => unreachable!(),
                 roles_logic_sv2::channel_logic::channel_factory::OnNewShare::ShareMeetBitcoinTarget((share,t_id,coinbase)) => {
                     info!("Found share that meet bitcoin target");
+                    println!("VERSION: {:?}", share.get_version());
+                    println!("VERSION LE: {:?}", share.get_version().to_be());
+                    // coinbase.reverse();
                     let solution = SubmitSolution {
                         template_id: t_id,
                         version: share.get_version(),
                         header_timestamp: share.get_n_time(),
                         header_nonce: share.get_nonce(),
-                        coinbase_tx: coinbase.try_into()?,
+                        coinbase_tx: coinbase.try_into()?
                     };
                     // TODO we can block everything with the below (looks like this will infinite loop??)
                     while self.solution_sender.try_send(solution.clone()).is_err() {};

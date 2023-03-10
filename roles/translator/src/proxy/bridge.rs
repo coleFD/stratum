@@ -2,6 +2,7 @@ use async_channel::{Receiver, Sender};
 use async_std::task;
 use roles_logic_sv2::{
     channel_logic::channel_factory::{ExtendedChannelKind, ProxyExtendedChannelFactory},
+    job_creator::extended_job_to_non_segwit,
     mining_sv2::{
         ExtendedExtranonce, NewExtendedMiningJob, SetNewPrevHash, SubmitSharesExtended, Target,
     },
@@ -62,6 +63,8 @@ pub struct Bridge {
     future_jobs: Vec<NewExtendedMiningJob<'static>>,
     last_p_hash: Option<SetNewPrevHash<'static>>,
     target: Arc<Mutex<Vec<u8>>>,
+    /// used for translating segwit to non segwit coinbase tx for jobs
+    channel_extranonce_len: usize,
 }
 
 impl Bridge {
@@ -84,6 +87,7 @@ impl Bridge {
             target.safe_lock(|t| t.clone()).unwrap().try_into().unwrap();
         let upstream_target: Target = upstream_target.into();
         let kind = ExtendedChannelKind::Proxy { upstream_target };
+        let channel_extranonce_len = extranonces.get_len();
         Self {
             rx_sv1_submit,
             tx_sv2_submit_shares_ext,
@@ -105,6 +109,7 @@ impl Bridge {
             future_jobs: vec![],
             last_p_hash: None,
             target,
+            channel_extranonce_len,
         }
     }
 
@@ -331,12 +336,13 @@ impl Bridge {
     /// `SetNewPrevHash` `job_id`, an error has occurred on the Upstream pool role and the
     /// connection will close.
     fn handle_new_extended_mining_job(self_: Arc<Mutex<Self>>) {
-        let (tx_sv1_notify, rx_sv2_new_ext_mining_job, tx_status) = self_
+        let (tx_sv1_notify, rx_sv2_new_ext_mining_job, tx_status, extended_extranonce_len) = self_
             .safe_lock(|s| {
                 (
                     s.tx_sv1_notify.clone(),
                     s.rx_sv2_new_ext_mining_job.clone(),
                     s.tx_status.clone(),
+                    s.channel_extranonce_len,
                 )
             })
             .unwrap();
@@ -349,6 +355,14 @@ impl Bridge {
                 debug!(
                     "handle_new_extended_mining_job job_id: {:?}",
                     &sv2_new_extended_mining_job.job_id
+                );
+                // convert to non segwit jobs so we dont have to depend if miner's support segwit or not
+                let sv2_new_extended_mining_job = handle_result!(
+                    tx_status,
+                    extended_job_to_non_segwit(
+                        sv2_new_extended_mining_job,
+                        extended_extranonce_len
+                    )
                 );
                 let res = self_
                     .safe_lock(|s| {
