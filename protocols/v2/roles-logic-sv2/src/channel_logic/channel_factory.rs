@@ -767,8 +767,12 @@ impl ChannelFactory {
         };
         let hash_ = header.block_hash();
         let hash = hash_.as_hash().into_inner();
+        println!("\nHEADER: {:?}", &header);
+        println!("SHARE: {:?}", &m);
         tracing::debug!("Share Hash: {:?}", &hash);
         let hash: Target = hash.into();
+        tracing::debug!("UPSTREAM TARGET: {:?}", binary_sv2::U256::from(upstream_target.clone()));
+        tracing::debug!("DOWNSTREAM TARGET: {:?}\n", binary_sv2::U256::from(downstream_target.clone()));
         if hash <= bitcoin_target {
             let coinbase = [coinbase_tx_prefix, &extranonce[..], coinbase_tx_suffix]
                 .concat()
@@ -1414,7 +1418,7 @@ impl ProxyExtendedChannelFactory {
             .extranonces
             .without_upstream_part(Some(downstream_extranonce))
     }
-    
+
     pub fn update_target_for_channel(
         &mut self,
         channel_id: u32,

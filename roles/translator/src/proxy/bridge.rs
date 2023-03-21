@@ -459,6 +459,7 @@ impl Bridge {
         let mut send_upstream = false;
         let res = self_
             .safe_lock(|s| {
+                s.channel_factory.set_target(&mut upstream_target);
                 s.channel_factory
                     .on_submit_shares_extended(sv2_submit.clone(), Some(crate::utils::proxy_extranonce1_len(
                         s.channel_factory.channel_extranonce2_size(),

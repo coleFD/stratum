@@ -260,6 +260,7 @@ impl Upstream {
             })
             .map_err(|_e| PoisonLock)??;
         let user_identity = "ABC".to_string().try_into()?;
+        debug!("NOMINAL HASH RATE: {:?}", nominal_hash_rate);
         let open_channel = Mining::OpenExtendedMiningChannel(OpenExtendedMiningChannel {
             request_id: 0, // TODO
             user_identity, // TODO
@@ -696,6 +697,7 @@ impl ParseUpstreamMiningMessages<Downstream, NullDownstreamMiningSelector, NoRou
                 m.extranonce_size,
             ));
         }
+        println!("\n TARGET FROM UPSTREAM: {:?}", &m.target);
         self.target
             .safe_lock(|t| *t = m.target.to_vec())
             .map_err(|e| RolesLogicError::PoisonLock(e.to_string()))?;
