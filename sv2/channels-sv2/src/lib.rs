@@ -29,6 +29,7 @@ pub mod chain_tip;
 pub mod client;
 pub mod merkle_root;
 pub mod target;
+pub mod channels_psuedo;
 
 #[cfg(not(feature = "no_std"))]
 pub mod vardiff;
